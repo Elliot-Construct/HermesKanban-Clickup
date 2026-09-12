@@ -55,6 +55,10 @@ class SyncService:
         return out
 
     @staticmethod
+    def _clickup_description(task: dict[str, Any]) -> str:
+        return task.get("markdown_description") or task.get("description") or task.get("text_content") or ""
+
+    @staticmethod
     def _priority_from_clickup(task: dict[str, Any]) -> int:
         priority = task.get("priority")
         if isinstance(priority, dict):
@@ -78,7 +82,12 @@ class SyncService:
         return TaskSnapshot(task.get("title") or "", task.get("body") or "", task.get("status") or "todo", int(task.get("priority") or 0))
 
     def _clickup_snapshot(self, task: dict[str, Any]) -> TaskSnapshot:
-        return TaskSnapshot(task.get("name") or "", strip_managed_section(task.get("description") or task.get("text_content") or ""), self._status_from_clickup(task), self._priority_from_clickup(task))
+        return TaskSnapshot(
+            task.get("name") or "",
+            strip_managed_section(self._clickup_description(task)),
+            self._status_from_clickup(task),
+            self._priority_from_clickup(task),
+        )
 
     def _clickup_status(self, hermes_status: str) -> str:
         if hermes_status not in self.status_map:
@@ -194,7 +203,7 @@ class SyncService:
 
             c_by_anchor: dict[str, dict[str, Any]] = {}
             for task in clickup_tasks:
-                anchor = extract_anchor(task.get("description") or "")
+                anchor = extract_anchor(self._clickup_description(task))
                 if anchor and anchor.get("board") == board_slug:
                     c_by_anchor[str(anchor["task"])] = task
 
@@ -218,7 +227,7 @@ class SyncService:
                 c_id = str(ctask["id"])
                 if c_id in linked_clickup_ids:
                     continue
-                anchor = extract_anchor(ctask.get("description") or "")
+                anchor = extract_anchor(self._clickup_description(ctask))
                 if anchor:
                     hermes_id = str(anchor.get("task"))
                     if not self.hermes.task_exists(board_slug, hermes_id):
