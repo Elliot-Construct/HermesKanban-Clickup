@@ -5,7 +5,10 @@ import re
 from typing import Any
 
 _MARKER_RE = re.compile(r"\[HERMES_ACTIVITY\s+(comment|run):([^\]]+)\]")
-_CLICKUP_AUTHOR_RE = re.compile(r"^clickup:([^:]+)(?::.*)?$")
+_CLICKUP_COMMENT_RE = re.compile(
+    r"\[CLICKUP_COMMENT\s+id:([^\s\]]+)(?:\s+user:([^\]\s]+))?\]"
+)
+_LEGACY_CLICKUP_AUTHOR_RE = re.compile(r"^clickup:([^:]+)(?::.*)?$")
 
 
 def format_hermes_comment(comment: dict[str, Any]) -> str:
@@ -44,16 +47,47 @@ def clickup_comment_text(comment: dict[str, Any]) -> str:
     return ""
 
 
+def _clean_display_name(value: Any) -> str:
+    return " ".join(str(value or "").replace("\n", " ").replace("\r", " ").split()).strip()
+
+
 def clickup_comment_origin_author(comment: dict[str, Any]) -> str:
-    comment_id = str(comment.get("id") or "unknown")
+    """Return a human-readable Hermes author without exposing ClickUp email addresses."""
     user = comment.get("user") or {}
-    username = str(user.get("username") or user.get("email") or "user").replace(":", "-").strip()
-    return f"clickup:{comment_id}:{username}"
+    display = _clean_display_name(user.get("username") or user.get("name"))
+    if not display:
+        user_id = _clean_display_name(user.get("id"))
+        display = f"ClickUp User {user_id}" if user_id else "ClickUp User"
+    return f"{display} (ClickUp)"
 
 
-def clickup_comment_origin_id(author: str | None) -> str | None:
-    match = _CLICKUP_AUTHOR_RE.match(author or "")
-    return match.group(1) if match else None
+def format_clickup_import_body(comment: dict[str, Any]) -> str:
+    """Append a recoverable origin marker to a human ClickUp comment."""
+    text = clickup_comment_text(comment)
+    comment_id = _clean_display_name(comment.get("id")) or "unknown"
+    user = comment.get("user") or {}
+    user_id = _clean_display_name(user.get("id"))
+    marker = f"[CLICKUP_COMMENT id:{comment_id}"
+    if user_id:
+        marker += f" user:{user_id}"
+    marker += "]"
+    return f"{text}\n\n{marker}" if text else marker
+
+
+def clickup_comment_origin_id(text: str | None) -> str | None:
+    """Extract ClickUp comment identity from new body markers or legacy author values."""
+    value = text or ""
+    marker = _CLICKUP_COMMENT_RE.search(value)
+    if marker:
+        return marker.group(1)
+    legacy = _LEGACY_CLICKUP_AUTHOR_RE.match(value)
+    return legacy.group(1) if legacy else None
+
+
+def _hermes_comment_clickup_origin_id(comment: dict[str, Any]) -> str | None:
+    return clickup_comment_origin_id(str(comment.get("body") or "")) or clickup_comment_origin_id(
+        str(comment.get("author") or "")
+    )
 
 
 def sync_task_activity(
@@ -90,14 +124,13 @@ def sync_task_activity(
     imported_clickup_ids = {
         origin_id
         for comment in hermes_comments
-        if (origin_id := clickup_comment_origin_id(str(comment.get("author") or "")))
+        if (origin_id := _hermes_comment_clickup_origin_id(comment))
     }
 
     for comment in hermes_comments:
         source_id = str(comment.get("id") or "").strip()
         body = str(comment.get("body") or "").strip()
-        author = str(comment.get("author") or "")
-        if not source_id or not body or clickup_comment_origin_id(author):
+        if not source_id or not body or _hermes_comment_clickup_origin_id(comment):
             continue
 
         key = ("comment", source_id)
@@ -155,13 +188,15 @@ def sync_task_activity(
             continue
 
         author = clickup_comment_origin_author(comment)
+        body = format_clickup_import_body(comment)
         if dry_run:
             logging.getLogger(__name__).info(
-                "Would import ClickUp comment %s into Hermes %s/%s",
+                "Would import ClickUp comment %s into Hermes %s/%s as %s",
                 source_id,
                 board_slug,
                 task_id,
+                author,
             )
             continue
-        hermes.add_comment(board_slug, task_id, author=author, body=text)
+        hermes.add_comment(board_slug, task_id, author=author, body=body)
         state.mark_activity(board_slug, task_id, "clickup_comment", source_id)
