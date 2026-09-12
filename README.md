@@ -24,12 +24,15 @@ The service polls both APIs in one reconciliation cycle. It does not require Cli
 - Existing Hermes tasks create matching ClickUp tasks.
 - New unlinked ClickUp tasks create Hermes tasks in the corresponding board.
 - Title, description, status, and compatible priority values synchronize in both directions.
+- Deleting a previously linked task in Hermes deletes its ClickUp counterpart.
+- Deleting a previously linked task in ClickUp deletes its Hermes counterpart.
+- Deletion is only propagated after a direct existence check, so a task merely omitted by a board/list query is not treated as deleted.
 - Hermes identity metadata is stored in a managed footer inside the ClickUp task description.
 - Human-written description text is preserved outside that managed block.
 - A local SQLite state database records mappings and the last reconciled task snapshot.
 - If the local mapping database is lost, linked tasks can be rediscovered from the managed description footer.
 
-Deliberately not synchronized in the first release: destructive deletion, attachments, comments, run history, and ClickUp-specific planning metadata.
+Deliberately not synchronized in the first release: attachments, comments, run history, and ClickUp-specific planning metadata.
 
 ## Conflict policy
 
@@ -150,6 +153,16 @@ Agent: `example-profile`
 
 Text outside the markers belongs to the task description and is synchronized normally. The service only replaces the managed block.
 
+## Deletion safety
+
+Deletion propagation is intentionally stricter than ordinary field synchronization:
+
+1. the task must already be linked by the local mapping database or Hermes metadata anchor;
+2. the task must be absent from the normal reconciliation result; and
+3. the synchronizer performs a direct API existence check before deleting the counterpart.
+
+Brand-new unlinked ClickUp cards are therefore adopted into Hermes, not deleted. Archived Hermes tasks are requested explicitly from the Hermes API so they are not confused with deleted tasks.
+
 ## Security
 
 - Never commit `CLICKUP_TOKEN`, Hermes session tokens, real workspace IDs, or generated SQLite state.
@@ -168,4 +181,4 @@ The integration is intentionally small: HTTP adapters, deterministic reconciliat
 
 ## License
 
-MIT
+Apache-2.0
