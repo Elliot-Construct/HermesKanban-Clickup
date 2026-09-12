@@ -14,6 +14,8 @@ ClickUp Folder: Hermes
 
 ClickUp task              <->  Hermes task
 ClickUp task status       <->  Hermes task status
+Hermes task comments      <->  ClickUp task comments
+Hermes run summaries       ->  ClickUp task comments
 ```
 
 The service polls both APIs in one reconciliation cycle. It does not require ClickUp webhooks, custom fields, a paid ClickUp plan, or modifications to Hermes.
@@ -24,15 +26,52 @@ The service polls both APIs in one reconciliation cycle. It does not require Cli
 - Existing Hermes tasks create matching ClickUp tasks.
 - New unlinked ClickUp tasks create Hermes tasks in the corresponding board.
 - Title, description, status, and compatible priority values synchronize in both directions.
+- Hermes task comments are appended to the corresponding ClickUp task as comments.
+- Completed Hermes run summaries are appended to ClickUp as chronological activity comments.
+- Human ClickUp task comments are imported into the Hermes task comment thread so workers can see them in task context.
+- Comment/run activity is de-duplicated locally and carries recoverable source markers so a lost local state database does not cause a comment echo loop.
 - Deleting a previously linked task in Hermes deletes its ClickUp counterpart.
 - Deleting a previously linked task in ClickUp deletes its Hermes counterpart.
 - Deletion is only propagated after a direct existence check, so a task merely omitted by a board/list query is not treated as deleted.
 - Hermes identity metadata is stored in a managed footer inside the ClickUp task description.
 - Human-written description text is preserved outside that managed block.
-- A local SQLite state database records mappings and the last reconciled task snapshot.
-- If the local mapping database is lost, linked tasks can be rediscovered from the managed description footer.
+- A local SQLite state database records mappings, last reconciled task snapshots, and activity IDs.
+- If the local mapping database is lost, linked tasks can be rediscovered from the managed description footer and activity markers.
 
-Deliberately not synchronized in the first release: attachments, comments, run history, and ClickUp-specific planning metadata.
+Deliberately not synchronized in the first release: attachments, full run logs, edits/deletions of historical comments, and ClickUp-specific planning metadata.
+
+## Activity comments
+
+The task description remains the durable task contract. Comments are the chronological activity and conversation trail.
+
+A Hermes comment appears in ClickUp in a form similar to:
+
+```text
+🤖 Hermes · worker
+
+Implemented the retry path and verified reconnect behavior.
+
+[HERMES_ACTIVITY comment:12]
+```
+
+A Hermes run handoff appears as:
+
+```text
+🤖 Hermes · worker
+Run #17 · completed
+
+Implemented the requested change. Tests pass.
+
+[HERMES_ACTIVITY run:17]
+```
+
+The small activity marker is intentional. It lets the synchronizer recover de-duplication after local state loss without relying on paid ClickUp custom fields.
+
+When a human writes a normal ClickUp task comment, it is imported into Hermes with an origin-aware author such as `clickup:77:Operator`. Hermes workers can therefore consume the comment thread normally while the synchronizer can recognize that comment on later polls and avoid echoing it back into ClickUp.
+
+Activity sync is append-only in v1. Editing or deleting an already-synchronized historical comment does not mutate its counterpart.
+
+The ClickUp API request uses `notify_all=false` for generated comments. ClickUp may still notify task watchers or assignees according to ClickUp's own notification behavior.
 
 ## Conflict policy
 
@@ -168,7 +207,7 @@ Brand-new unlinked ClickUp cards are therefore adopted into Hermes, not deleted.
 - Never commit `CLICKUP_TOKEN`, Hermes session tokens, real workspace IDs, or generated SQLite state.
 - `.env*` files and local database files are ignored by Git except for `.env.example`.
 - Prefer connecting to Hermes over loopback rather than exposing its plugin API publicly.
-- The managed ClickUp description block contains board/task identifiers, not credentials.
+- Managed description and activity markers contain task/run/comment identifiers, not credentials.
 
 ## Development
 
@@ -177,7 +216,7 @@ pytest -q
 python -m compileall -q src
 ```
 
-The integration is intentionally small: HTTP adapters, deterministic reconciliation logic, description metadata handling, and SQLite mapping state.
+The integration is intentionally small: HTTP adapters, deterministic reconciliation logic, append-only activity synchronization, description metadata handling, and SQLite mapping state.
 
 ## License
 
