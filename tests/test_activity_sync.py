@@ -2,6 +2,7 @@ from hermes_clickup_sync.activity import (
     clickup_comment_origin_author,
     clickup_comment_origin_id,
     clickup_comment_text,
+    format_clickup_import_body,
     format_hermes_comment,
     format_run_summary,
     parse_hermes_activity_marker,
@@ -78,13 +79,26 @@ def test_formats_run_summary_with_outcome_and_marker():
 def test_clickup_comment_helpers_flatten_and_track_origin():
     comment = {
         "id": "991",
-        "user": {"username": "Operator"},
+        "user": {"id": 42, "username": "Operator", "email": "private@example.com"},
         "comment": [{"text": "Please "}, {"text": "keep this."}],
     }
     assert clickup_comment_text(comment) == "Please keep this."
-    author = clickup_comment_origin_author(comment)
-    assert author == "clickup:991:Operator"
-    assert clickup_comment_origin_id(author) == "991"
+    assert clickup_comment_origin_author(comment) == "Operator (ClickUp)"
+    body = format_clickup_import_body(comment)
+    assert body.startswith("Please keep this.")
+    assert "private@example.com" not in body
+    assert "[CLICKUP_COMMENT id:991 user:42]" in body
+    assert clickup_comment_origin_id(body) == "991"
+
+
+def test_clickup_comment_author_fallback_does_not_expose_email():
+    comment = {
+        "id": "992",
+        "user": {"id": 73, "email": "someone@example.com"},
+        "comment": [{"text": "Please review."}],
+    }
+    assert clickup_comment_origin_author(comment) == "ClickUp User 73 (ClickUp)"
+    assert "someone@example.com" not in format_clickup_import_body(comment)
 
 
 def test_activity_mapping_is_idempotent_and_cleaned_with_task(tmp_path):
@@ -133,7 +147,7 @@ def test_human_clickup_comment_is_imported_once_into_hermes(tmp_path):
             {
                 "id": "77",
                 "date": "1",
-                "user": {"username": "Operator"},
+                "user": {"id": 42, "username": "Operator"},
                 "comment": [{"text": "Preserve the existing session."}],
             }
         ]
@@ -150,17 +164,35 @@ def test_human_clickup_comment_is_imported_once_into_hermes(tmp_path):
         )
 
     assert hermes.added == [
-        ("board", "h1", "clickup:77:Operator", "Preserve the existing session.")
+        (
+            "board",
+            "h1",
+            "Operator (ClickUp)",
+            "Preserve the existing session.\n\n[CLICKUP_COMMENT id:77 user:42]",
+        )
     ]
 
 
 def test_embedded_markers_prevent_duplicates_after_state_loss(tmp_path):
     hermes = FakeHermesActivity(
-        comments=[{"id": 12, "author": "worker", "body": "Found the cause."}],
+        comments=[
+            {"id": 12, "author": "worker", "body": "Found the cause."},
+            {
+                "id": 13,
+                "author": "Operator (ClickUp)",
+                "body": "Human note\n\n[CLICKUP_COMMENT id:77 user:42]",
+            },
+        ],
         runs=[{"id": 17, "summary": "Fixed it.", "outcome": "completed"}],
     )
     clickup = FakeClickUpActivity(
         [
+            {
+                "id": "77",
+                "date": "3",
+                "user": {"id": 42, "username": "Operator"},
+                "comment": [{"text": "Human note"}],
+            },
             {
                 "id": "c-run",
                 "date": "2",
@@ -202,7 +234,11 @@ def test_clickup_origin_hermes_comment_is_not_echoed_back(tmp_path):
     state = StateStore(tmp_path / "sync.db")
     hermes = FakeHermesActivity(
         comments=[
-            {"id": 88, "author": "clickup:77:Operator", "body": "Human note"}
+            {
+                "id": 88,
+                "author": "Operator (ClickUp)",
+                "body": "Human note\n\n[CLICKUP_COMMENT id:77 user:42]",
+            }
         ]
     )
     clickup = FakeClickUpActivity(
@@ -210,7 +246,7 @@ def test_clickup_origin_hermes_comment_is_not_echoed_back(tmp_path):
             {
                 "id": "77",
                 "date": "1",
-                "user": {"username": "Operator"},
+                "user": {"id": 42, "username": "Operator"},
                 "comment": [{"text": "Human note"}],
             }
         ]
