@@ -81,6 +81,18 @@ class StateStore:
             ).fetchone()
         if row is None:
             return None
+        return self._mapping_from_row(row)
+
+    def list_task_mappings(self, board_slug: str) -> list[TaskMapping]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM task_map WHERE board_slug = ? ORDER BY hermes_task_id",
+                (board_slug,),
+            ).fetchall()
+        return [self._mapping_from_row(row) for row in rows]
+
+    @staticmethod
+    def _mapping_from_row(row: sqlite3.Row) -> TaskMapping:
         return TaskMapping(
             board_slug=row["board_slug"],
             hermes_task_id=row["hermes_task_id"],
@@ -88,6 +100,13 @@ class StateStore:
             clickup_task_id=row["clickup_task_id"],
             last_synced=TaskSnapshot(**json.loads(row["last_synced_json"])),
         )
+
+    def delete_task_mapping(self, board_slug: str, hermes_task_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM task_map WHERE board_slug = ? AND hermes_task_id = ?",
+                (board_slug, hermes_task_id),
+            )
 
     def upsert_board_mapping(self, board_slug: str, clickup_list_id: str) -> None:
         with self._connect() as conn:
