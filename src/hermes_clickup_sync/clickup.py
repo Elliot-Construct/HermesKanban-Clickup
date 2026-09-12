@@ -99,6 +99,32 @@ class ClickUpClient:
             payload["markdown_content"] = payload.pop("markdown_description")
         return self._request("PUT", f"/api/v2/task/{task_id}", json=payload)
 
+    def list_comments(self, task_id: str) -> list[dict[str, Any]]:
+        comments: list[dict[str, Any]] = []
+        params: dict[str, Any] = {}
+        while True:
+            data = self._request("GET", f"/api/v2/task/{task_id}/comment", params=params)
+            batch = data.get("comments", [])
+            comments.extend(batch)
+            if len(batch) < 25:
+                break
+            last = batch[-1]
+            if not last.get("id") or not last.get("date"):
+                break
+            params = {"start": last["date"], "start_id": last["id"]}
+        return comments
+
+    def add_comment(self, task_id: str, text: str) -> str | None:
+        data = self._request(
+            "POST",
+            f"/api/v2/task/{task_id}/comment",
+            json={"comment_text": text, "notify_all": False},
+        )
+        ident = data.get("id")
+        if ident is None and isinstance(data.get("comment"), dict):
+            ident = data["comment"].get("id")
+        return None if ident is None else str(ident)
+
     def delete_task(self, task_id: str) -> None:
         response = self.http.delete(f"/api/v2/task/{task_id}")
         response.raise_for_status()
