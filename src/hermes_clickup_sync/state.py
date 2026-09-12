@@ -50,6 +50,18 @@ class StateStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS activity_map (
+                    board_slug TEXT NOT NULL,
+                    hermes_task_id TEXT NOT NULL,
+                    source_kind TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    target_id TEXT,
+                    PRIMARY KEY (board_slug, hermes_task_id, source_kind, source_id)
+                )
+                """
+            )
 
     def upsert_task_mapping(
         self,
@@ -107,6 +119,69 @@ class StateStore:
                 "DELETE FROM task_map WHERE board_slug = ? AND hermes_task_id = ?",
                 (board_slug, hermes_task_id),
             )
+            conn.execute(
+                "DELETE FROM activity_map WHERE board_slug = ? AND hermes_task_id = ?",
+                (board_slug, hermes_task_id),
+            )
+
+    def mark_activity(
+        self,
+        board_slug: str,
+        hermes_task_id: str,
+        source_kind: str,
+        source_id: str,
+        target_id: str | None = None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO activity_map(board_slug, hermes_task_id, source_kind, source_id, target_id)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(board_slug, hermes_task_id, source_kind, source_id)
+                DO UPDATE SET target_id=excluded.target_id
+                """,
+                (
+                    board_slug,
+                    hermes_task_id,
+                    source_kind,
+                    str(source_id),
+                    None if target_id is None else str(target_id),
+                ),
+            )
+
+    def activity_seen(
+        self,
+        board_slug: str,
+        hermes_task_id: str,
+        source_kind: str,
+        source_id: str,
+    ) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1 FROM activity_map
+                WHERE board_slug = ? AND hermes_task_id = ? AND source_kind = ? AND source_id = ?
+                """,
+                (board_slug, hermes_task_id, source_kind, str(source_id)),
+            ).fetchone()
+        return row is not None
+
+    def activity_target(
+        self,
+        board_slug: str,
+        hermes_task_id: str,
+        source_kind: str,
+        source_id: str,
+    ) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT target_id FROM activity_map
+                WHERE board_slug = ? AND hermes_task_id = ? AND source_kind = ? AND source_id = ?
+                """,
+                (board_slug, hermes_task_id, source_kind, str(source_id)),
+            ).fetchone()
+        return row["target_id"] if row else None
 
     def upsert_board_mapping(self, board_slug: str, clickup_list_id: str) -> None:
         with self._connect() as conn:
