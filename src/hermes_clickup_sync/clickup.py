@@ -38,7 +38,12 @@ class ClickUpClient:
             data = self._request(
                 "GET",
                 f"/api/v2/list/{list_id}/task",
-                params={"archived": "false", "include_closed": "true", "page": page},
+                params={
+                    "archived": "false",
+                    "include_closed": "true",
+                    "include_markdown_description": "true",
+                    "page": page,
+                },
             )
             batch = data.get("tasks", [])
             tasks.extend(batch)
@@ -48,7 +53,10 @@ class ClickUpClient:
         return tasks
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
-        response = self.http.get(f"/api/v2/task/{task_id}")
+        response = self.http.get(
+            f"/api/v2/task/{task_id}",
+            params={"include_markdown_description": "true"},
+        )
         if response.status_code == 404:
             return None
         response.raise_for_status()
@@ -86,6 +94,9 @@ class ClickUpClient:
         return self._request("POST", f"/api/v2/list/{list_id}/task", json=payload)
 
     def update_task(self, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(payload)
+        if "markdown_description" in payload:
+            payload["markdown_content"] = payload.pop("markdown_description")
         return self._request("PUT", f"/api/v2/task/{task_id}", json=payload)
 
     def delete_task(self, task_id: str) -> None:
