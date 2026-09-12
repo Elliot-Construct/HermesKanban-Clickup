@@ -37,15 +37,18 @@ class HermesClient:
             params={"board": board, "include_archived": "true"},
         )
 
-    def task_exists(self, board: str, task_id: str) -> bool:
+    def get_task(self, board: str, task_id: str) -> dict[str, Any] | None:
         response = self.http.get(
             f"/api/plugins/kanban/tasks/{task_id}",
             params={"board": board},
         )
         if response.status_code == 404:
-            return False
+            return None
         response.raise_for_status()
-        return True
+        return response.json().get("task")
+
+    def task_exists(self, board: str, task_id: str) -> bool:
+        return self.get_task(board, task_id) is not None
 
     def create_task(self, board: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", "/api/plugins/kanban/tasks", params={"board": board}, json=payload)["task"]
