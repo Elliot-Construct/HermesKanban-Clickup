@@ -67,7 +67,19 @@ Implemented the requested change. Tests pass.
 
 The small activity marker is intentional. It lets the synchronizer recover de-duplication after local state loss without relying on paid ClickUp custom fields.
 
-When a human writes a normal ClickUp task comment, it is imported into Hermes with an origin-aware author such as `clickup:77:Operator`. Hermes workers can therefore consume the comment thread normally while the synchronizer can recognize that comment on later polls and avoid echoing it back into ClickUp.
+When a human writes a normal ClickUp task comment, it is imported into Hermes with a readable author such as `Operator (ClickUp)` and a recoverable marker in the comment body:
+
+```text
+Author: Operator (ClickUp)
+
+Preserve the existing browser session.
+
+[CLICKUP_COMMENT id:77 user:42]
+```
+
+The visible author is derived from the ClickUp display name. Email addresses are not used as a fallback display identity; if no display name is available the synchronizer uses a generic label such as `ClickUp User 42 (ClickUp)`. The body marker carries the source comment/user identifiers used for de-duplication and recovery after local state loss.
+
+For upgrade compatibility, the synchronizer also recognizes the older `clickup:<comment-id>:<name>` Hermes author format and will not echo those historical comments back into ClickUp.
 
 Activity sync is append-only in v1. Editing or deleting an already-synchronized historical comment does not mutate its counterpart.
 
@@ -208,6 +220,7 @@ Brand-new unlinked ClickUp cards are therefore adopted into Hermes, not deleted.
 - `.env*` files and local database files are ignored by Git except for `.env.example`.
 - Prefer connecting to Hermes over loopback rather than exposing its plugin API publicly.
 - Managed description and activity markers contain task/run/comment identifiers, not credentials.
+- ClickUp email addresses are not copied into Hermes comment author labels.
 
 ## Development
 
