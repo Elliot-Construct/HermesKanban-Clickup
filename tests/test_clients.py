@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import httpx
 
 from hermes_clickup_sync.clickup import ClickUpClient
@@ -36,13 +38,46 @@ def test_clickup_get_task_returns_none_on_404():
     assert client.get_task("missing") is None
 
 
+def test_clickup_reads_request_markdown_descriptions():
+    seen = []
+
+    def handler(request: httpx.Request):
+        seen.append(str(request.url))
+        if "/list/" in request.url.path:
+            return httpx.Response(200, json={"tasks": []})
+        return httpx.Response(200, json={"id": "task-1"})
+
+    http = httpx.Client(base_url="https://api.clickup.com", transport=httpx.MockTransport(handler))
+    client = ClickUpClient("token", http=http)
+
+    client.list_tasks("list-1")
+    client.get_task("task-1")
+
+    assert all("include_markdown_description=true" in url for url in seen)
+
+
+def test_clickup_update_translates_markdown_description_to_markdown_content():
+    seen = {}
+
+    def handler(request: httpx.Request):
+        seen["payload"] = json.loads(request.content.decode())
+        return httpx.Response(200, json={"id": "task-1"})
+
+    http = httpx.Client(base_url="https://api.clickup.com", transport=httpx.MockTransport(handler))
+    client = ClickUpClient("token", http=http)
+
+    client.update_task("task-1", {"name": "Task", "markdown_description": "**body**"})
+
+    assert seen["payload"] == {"name": "Task", "markdown_content": "**body**"}
+
+
 def test_clickup_delete_uses_delete_endpoint():
     seen = {}
 
     def handler(request: httpx.Request):
         seen["method"] = request.method
         seen["path"] = request.url.path
-        return httpx.Response(200, json={})
+        return httpx.Response(204)
 
     http = httpx.Client(base_url="https://api.clickup.com", transport=httpx.MockTransport(handler))
     client = ClickUpClient("token", http=http)
