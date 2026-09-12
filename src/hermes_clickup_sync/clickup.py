@@ -47,6 +47,13 @@ class ClickUpClient:
             page += 1
         return tasks
 
+    def task_exists(self, task_id: str) -> bool:
+        response = self.http.get(f"/api/v2/task/{task_id}")
+        if response.status_code == 404:
+            return False
+        response.raise_for_status()
+        return True
+
     def create_task(
         self,
         list_id: str,
@@ -77,3 +84,7 @@ class ClickUpClient:
 
     def update_task(self, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("PUT", f"/api/v2/task/{task_id}", json=payload)
+
+    def delete_task(self, task_id: str) -> None:
+        response = self.http.delete(f"/api/v2/task/{task_id}")
+        response.raise_for_status()
