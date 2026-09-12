@@ -18,6 +18,9 @@ dev = ["pytest>=8,<9"]
 [project.scripts]
 hermes-clickup-sync = "hermes_clickup_sync.cli:main"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/hermes_clickup_sync"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
