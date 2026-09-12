@@ -19,3 +19,5 @@ jobs:
       - run: pip install -e '.[dev]'
       - run: pytest -q
       - run: python -m compileall -q src
+      - run: hermes-clickup-sync --help
+      - run: python -m pip wheel . --no-deps -w dist-test
