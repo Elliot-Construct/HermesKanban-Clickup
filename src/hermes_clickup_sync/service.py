@@ -12,17 +12,7 @@ log = logging.getLogger(__name__)
 
 
 class SyncService:
-    def __init__(
-        self,
-        *,
-        hermes,
-        clickup,
-        state: StateStore,
-        clickup_space_id: str,
-        folder_name: str,
-        status_map: dict[str, str],
-        dry_run: bool = False,
-    ):
+    def __init__(self, *, hermes, clickup, state: StateStore, clickup_space_id: str, folder_name: str, status_map: dict[str, str], dry_run: bool = False):
         self.hermes = hermes
         self.clickup = clickup
         self.state = state
@@ -33,8 +23,7 @@ class SyncService:
         self.dry_run = dry_run
 
     def _ensure_folder(self) -> dict[str, Any]:
-        folders = self.clickup.list_folders(self.clickup_space_id)
-        for folder in folders:
+        for folder in self.clickup.list_folders(self.clickup_space_id):
             if folder.get("name") == self.folder_name:
                 return folder
         if self.dry_run:
@@ -86,43 +75,22 @@ class SyncService:
 
     @staticmethod
     def _hermes_snapshot(task: dict[str, Any]) -> TaskSnapshot:
-        return TaskSnapshot(
-            title=task.get("title") or "",
-            body=task.get("body") or "",
-            status=task.get("status") or "todo",
-            priority=int(task.get("priority") or 0),
-        )
+        return TaskSnapshot(task.get("title") or "", task.get("body") or "", task.get("status") or "todo", int(task.get("priority") or 0))
 
     def _clickup_snapshot(self, task: dict[str, Any]) -> TaskSnapshot:
-        return TaskSnapshot(
-            title=task.get("name") or "",
-            body=strip_managed_section(task.get("description") or task.get("text_content") or ""),
-            status=self._status_from_clickup(task),
-            priority=self._priority_from_clickup(task),
-        )
+        return TaskSnapshot(task.get("name") or "", strip_managed_section(task.get("description") or task.get("text_content") or ""), self._status_from_clickup(task), self._priority_from_clickup(task))
 
     def _clickup_status(self, hermes_status: str) -> str:
-        try:
-            return self.status_map[hermes_status]
-        except KeyError as exc:
-            raise ValueError(f"Unmapped Hermes status: {hermes_status!r}") from exc
+        if hermes_status not in self.status_map:
+            raise ValueError(f"Unmapped Hermes status: {hermes_status!r}")
+        return self.status_map[hermes_status]
 
     def _create_clickup_from_hermes(self, list_id: str, board_slug: str, task: dict[str, Any]) -> dict[str, Any]:
         snapshot = self._hermes_snapshot(task)
         if self.dry_run:
             log.info("Would create ClickUp task for Hermes %s/%s", board_slug, task["id"])
             return {}
-        created = self.clickup.create_task(
-            list_id,
-            name=snapshot.title,
-            body=snapshot.body,
-            status=self._clickup_status(snapshot.status),
-            priority=snapshot.priority,
-            board=board_slug,
-            hermes_task_id=task["id"],
-            agent=task.get("assignee"),
-            run_id=None,
-        )
+        created = self.clickup.create_task(list_id, name=snapshot.title, body=snapshot.body, status=self._clickup_status(snapshot.status), priority=snapshot.priority, board=board_slug, hermes_task_id=task["id"], agent=task.get("assignee"), run_id=None)
         self.state.upsert_task_mapping(board_slug, task["id"], list_id, str(created["id"]), snapshot)
         return created
 
@@ -131,31 +99,20 @@ class SyncService:
         if self.dry_run:
             log.info("Would create Hermes task from ClickUp %s", task["id"])
             return {}
-        created = self.hermes.create_task(
-            board_slug,
-            {"title": snapshot.title, "body": snapshot.body, "priority": snapshot.priority},
-        )
+        created = self.hermes.create_task(board_slug, {"title": snapshot.title, "body": snapshot.body, "priority": snapshot.priority})
         if snapshot.status != created.get("status"):
             created = self.hermes.update_task(board_slug, created["id"], {"status": snapshot.status})
         self.state.upsert_task_mapping(board_slug, created["id"], list_id, str(task["id"]), self._hermes_snapshot(created))
-        managed = upsert_managed_section(
-            snapshot.body,
-            board=board_slug,
-            task_id=created["id"],
-            agent=created.get("assignee"),
-            run_id=None,
-        )
+        managed = upsert_managed_section(snapshot.body, board=board_slug, task_id=created["id"], agent=created.get("assignee"), run_id=None)
         self.clickup.update_task(str(task["id"]), {"markdown_description": managed})
         return created
 
     def _sync_pair(self, board_slug: str, list_id: str, htask: dict[str, Any], ctask: dict[str, Any]) -> None:
         mapping = self.state.get_task_mapping(board_slug, htask["id"])
         if mapping is None:
-            base = self._hermes_snapshot(htask)
-            self.state.upsert_task_mapping(board_slug, htask["id"], list_id, str(ctask["id"]), base)
+            self.state.upsert_task_mapping(board_slug, htask["id"], list_id, str(ctask["id"]), self._hermes_snapshot(htask))
             return
-        hs = self._hermes_snapshot(htask)
-        cs = self._clickup_snapshot(ctask)
+        hs, cs = self._hermes_snapshot(htask), self._clickup_snapshot(ctask)
         direction = decide_direction(mapping.last_synced, hs, cs)
         if direction == "noop":
             if hs == cs and mapping.last_synced != hs:
@@ -163,50 +120,48 @@ class SyncService:
             return
         if direction == "clickup_to_hermes":
             if not self.dry_run:
-                updated = self.hermes.update_task(
-                    board_slug,
-                    htask["id"],
-                    {"title": cs.title, "body": cs.body, "status": cs.status, "priority": cs.priority},
-                )
-                hs = self._hermes_snapshot(updated)
+                hs = self._hermes_snapshot(self.hermes.update_task(board_slug, htask["id"], {"title": cs.title, "body": cs.body, "status": cs.status, "priority": cs.priority}))
             else:
                 hs = cs
-        elif direction == "hermes_to_clickup":
+        else:
+            if direction == "conflict":
+                log.warning("Conflict on %s/%s; preferring Hermes state", board_slug, htask["id"])
             if not self.dry_run:
                 payload: dict[str, Any] = {
                     "name": hs.title,
-                    "markdown_description": upsert_managed_section(
-                        hs.body,
-                        board=board_slug,
-                        task_id=htask["id"],
-                        agent=htask.get("assignee"),
-                        run_id=None,
-                    ),
+                    "markdown_description": upsert_managed_section(hs.body, board=board_slug, task_id=htask["id"], agent=htask.get("assignee"), run_id=None),
                     "status": self._clickup_status(hs.status),
                 }
                 if 1 <= hs.priority <= 4:
                     payload["priority"] = hs.priority
                 self.clickup.update_task(str(ctask["id"]), payload)
-        else:
-            # Execution state belongs to Hermes; planning fields use ClickUp only when
-            # Hermes did not change them. For v1, whole-task conflicts prefer Hermes.
-            log.warning("Conflict on %s/%s; preferring Hermes state", board_slug, htask["id"])
-            if not self.dry_run:
-                self.clickup.update_task(
-                    str(ctask["id"]),
-                    {
-                        "name": hs.title,
-                        "markdown_description": upsert_managed_section(
-                            hs.body,
-                            board=board_slug,
-                            task_id=htask["id"],
-                            agent=htask.get("assignee"),
-                            run_id=None,
-                        ),
-                        "status": self._clickup_status(hs.status),
-                    },
-                )
         self.state.upsert_task_mapping(board_slug, htask["id"], list_id, str(ctask["id"]), hs)
+
+    def _apply_mapped_deletions(self, board_slug: str, h_by_id: dict[str, dict[str, Any]], c_by_id: dict[str, dict[str, Any]]) -> tuple[set[str], set[str]]:
+        deleted_h: set[str] = set()
+        deleted_c: set[str] = set()
+        for mapping in self.state.list_task_mappings(board_slug):
+            h_present = mapping.hermes_task_id in h_by_id
+            c_present = mapping.clickup_task_id in c_by_id
+            if h_present and c_present:
+                continue
+            if not h_present and c_present:
+                if not self.hermes.task_exists(board_slug, mapping.hermes_task_id):
+                    if not self.dry_run:
+                        self.clickup.delete_task(mapping.clickup_task_id)
+                    self.state.delete_task_mapping(board_slug, mapping.hermes_task_id)
+                    deleted_c.add(mapping.clickup_task_id)
+                continue
+            if h_present and not c_present:
+                if not self.clickup.task_exists(mapping.clickup_task_id):
+                    if not self.dry_run:
+                        self.hermes.delete_task(board_slug, mapping.hermes_task_id)
+                    self.state.delete_task_mapping(board_slug, mapping.hermes_task_id)
+                    deleted_h.add(mapping.hermes_task_id)
+                continue
+            if not self.hermes.task_exists(board_slug, mapping.hermes_task_id) and not self.clickup.task_exists(mapping.clickup_task_id):
+                self.state.delete_task_mapping(board_slug, mapping.hermes_task_id)
+        return deleted_h, deleted_c
 
     def run_once(self) -> None:
         folder = self._ensure_folder()
@@ -217,10 +172,19 @@ class SyncService:
             list_id = str(clickup_list["id"])
             if clickup_list not in lists:
                 lists.append(clickup_list)
+
             hermes_tasks = self._hermes_tasks(self.hermes.get_board(board_slug))
             clickup_tasks = self.clickup.list_tasks(list_id)
             h_by_id = {str(t["id"]): t for t in hermes_tasks}
             c_by_id = {str(t["id"]): t for t in clickup_tasks}
+
+            deleted_h, deleted_c = self._apply_mapped_deletions(board_slug, h_by_id, c_by_id)
+            for task_id in deleted_h:
+                h_by_id.pop(task_id, None)
+            for task_id in deleted_c:
+                c_by_id.pop(task_id, None)
+            clickup_tasks = [t for t in clickup_tasks if str(t["id"]) not in deleted_c]
+
             c_by_anchor: dict[str, dict[str, Any]] = {}
             for task in clickup_tasks:
                 anchor = extract_anchor(task.get("description") or "")
@@ -249,7 +213,10 @@ class SyncService:
                     continue
                 anchor = extract_anchor(ctask.get("description") or "")
                 if anchor:
-                    # Anchored task whose Hermes counterpart is absent: do not recreate deleted work.
-                    log.warning("ClickUp task %s points to missing Hermes task %s; leaving untouched", c_id, anchor.get("task"))
+                    hermes_id = str(anchor.get("task"))
+                    if not self.hermes.task_exists(board_slug, hermes_id):
+                        if not self.dry_run:
+                            self.clickup.delete_task(c_id)
+                        self.state.delete_task_mapping(board_slug, hermes_id)
                     continue
                 self._create_hermes_from_clickup(board_slug, list_id, ctask)
