@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from .activity import sync_task_activity
 from .metadata import extract_anchor, strip_managed_section, upsert_managed_section
 from .models import TaskSnapshot
 from .reconcile import decide_direction
@@ -113,6 +114,15 @@ class SyncService:
             return {}
         created = self.clickup.create_task(list_id, name=snapshot.title, body=snapshot.body, status=self._clickup_status(snapshot.status), priority=snapshot.priority, board=board_slug, hermes_task_id=task["id"], agent=task.get("assignee"), run_id=None)
         self._remember_task(board_slug, task["id"], list_id, str(created["id"]), snapshot)
+        sync_task_activity(
+            board_slug=board_slug,
+            hermes_task=task,
+            clickup_task_id=str(created["id"]),
+            hermes=self.hermes,
+            clickup=self.clickup,
+            state=self.state,
+            dry_run=self.dry_run,
+        )
         return created
 
     def _create_hermes_from_clickup(self, board_slug: str, list_id: str, task: dict[str, Any]) -> dict[str, Any]:
@@ -126,6 +136,15 @@ class SyncService:
         self._remember_task(board_slug, created["id"], list_id, str(task["id"]), self._hermes_snapshot(created))
         managed = upsert_managed_section(snapshot.body, board=board_slug, task_id=created["id"], agent=created.get("assignee"), run_id=None)
         self.clickup.update_task(str(task["id"]), {"markdown_description": managed})
+        sync_task_activity(
+            board_slug=board_slug,
+            hermes_task=created,
+            clickup_task_id=str(task["id"]),
+            hermes=self.hermes,
+            clickup=self.clickup,
+            state=self.state,
+            dry_run=self.dry_run,
+        )
         return created
 
     def _sync_pair(self, board_slug: str, list_id: str, htask: dict[str, Any], ctask: dict[str, Any]) -> None:
@@ -167,7 +186,6 @@ class SyncService:
         for mapping in self.state.list_task_mappings(board_slug):
             htask = h_by_id.get(mapping.hermes_task_id)
             ctask = c_by_id.get(mapping.clickup_task_id)
-
             if htask is None:
                 htask = self.hermes.get_task(board_slug, mapping.hermes_task_id)
                 if htask is not None:
@@ -176,7 +194,6 @@ class SyncService:
                 ctask = self.clickup.get_task(mapping.clickup_task_id)
                 if ctask is not None:
                     c_by_id[mapping.clickup_task_id] = ctask
-
             if htask is not None and ctask is not None:
                 continue
             if htask is None and ctask is not None:
@@ -207,25 +224,21 @@ class SyncService:
             list_id = str(clickup_list["id"])
             if clickup_list not in lists:
                 lists.append(clickup_list)
-
             hermes_tasks = self._hermes_tasks(self.hermes.get_board(board_slug))
             clickup_tasks = self.clickup.list_tasks(list_id)
             h_by_id = {str(t["id"]): t for t in hermes_tasks}
             c_by_id = {str(t["id"]): t for t in clickup_tasks}
-
             deleted_h, deleted_c = self._apply_mapped_deletions(board_slug, h_by_id, c_by_id)
             for task_id in deleted_h:
                 h_by_id.pop(task_id, None)
             for task_id in deleted_c:
                 c_by_id.pop(task_id, None)
             clickup_tasks = [t for t in clickup_tasks if str(t["id"]) not in deleted_c]
-
             c_by_anchor: dict[str, dict[str, Any]] = {}
             for task in clickup_tasks:
                 anchor = extract_anchor(self._clickup_description(task))
                 if anchor and anchor.get("board") == board_slug:
                     c_by_anchor[str(anchor["task"])] = task
-
             linked_clickup_ids: set[str] = set()
             for h_id, htask in h_by_id.items():
                 mapping = self.state.get_task_mapping(board_slug, h_id)
@@ -241,7 +254,15 @@ class SyncService:
                 if mapping is None:
                     self._remember_task(board_slug, h_id, list_id, str(ctask["id"]), self._hermes_snapshot(htask))
                 self._sync_pair(board_slug, list_id, htask, ctask)
-
+                sync_task_activity(
+                    board_slug=board_slug,
+                    hermes_task=htask,
+                    clickup_task_id=str(ctask["id"]),
+                    hermes=self.hermes,
+                    clickup=self.clickup,
+                    state=self.state,
+                    dry_run=self.dry_run,
+                )
             for ctask in clickup_tasks:
                 c_id = str(ctask["id"])
                 if c_id in linked_clickup_ids:
