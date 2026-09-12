@@ -37,7 +37,7 @@ class HermesClient:
             params={"board": board, "include_archived": "true"},
         )
 
-    def get_task(self, board: str, task_id: str) -> dict[str, Any] | None:
+    def get_task_detail(self, board: str, task_id: str) -> dict[str, Any] | None:
         response = self.http.get(
             f"/api/plugins/kanban/tasks/{task_id}",
             params={"board": board},
@@ -45,13 +45,22 @@ class HermesClient:
         if response.status_code == 404:
             return None
         response.raise_for_status()
-        return response.json().get("task")
+        return response.json()
+
+    def get_task(self, board: str, task_id: str) -> dict[str, Any] | None:
+        detail = self.get_task_detail(board, task_id)
+        return detail.get("task") if detail else None
 
     def task_exists(self, board: str, task_id: str) -> bool:
         return self.get_task(board, task_id) is not None
 
     def create_task(self, board: str, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._request("POST", "/api/plugins/kanban/tasks", params={"board": board}, json=payload)["task"]
+        return self._request(
+            "POST",
+            "/api/plugins/kanban/tasks",
+            params={"board": board},
+            json=payload,
+        )["task"]
 
     def update_task(self, board: str, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request(
@@ -60,6 +69,14 @@ class HermesClient:
             params={"board": board},
             json=payload,
         )["task"]
+
+    def add_comment(self, board: str, task_id: str, *, author: str, body: str) -> None:
+        self._request(
+            "POST",
+            f"/api/plugins/kanban/tasks/{task_id}/comments",
+            params={"board": board},
+            json={"author": author, "body": body},
+        )
 
     def delete_task(self, board: str, task_id: str) -> None:
         self._request(
