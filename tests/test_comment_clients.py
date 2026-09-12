@@ -1,3 +1,5 @@
+import json
+
 import httpx
 
 from hermes_clickup_sync.clickup import ClickUpClient
@@ -47,10 +49,10 @@ def test_hermes_add_comment_posts_author_and_body():
 
     assert seen["method"] == "POST"
     assert "/api/plugins/kanban/tasks/h1/comments" in seen["url"]
-    compact = seen["json"].replace(" ", "")
-    assert '"author":"clickup:9:Operator"' in compact
-    assert '"body":"Dothis"' not in compact
-    assert '"body":"Do this"'.replace(" ", "") in compact
+    assert json.loads(seen["json"]) == {
+        "author": "clickup:9:Operator",
+        "body": "Do this",
+    }
 
 
 def test_clickup_lists_all_comment_pages_and_adds_comment():
@@ -97,4 +99,7 @@ def test_clickup_lists_all_comment_pages_and_adds_comment():
     assert len(comments) == 26
     assert "start_id=24" in calls[1][1]
     assert client.add_comment("c1", "hello") == "777"
-    assert '"notify_all":false' in calls[-1][2].replace(" ", "")
+    assert json.loads(calls[-1][2]) == {
+        "comment_text": "hello",
+        "notify_all": False,
+    }
