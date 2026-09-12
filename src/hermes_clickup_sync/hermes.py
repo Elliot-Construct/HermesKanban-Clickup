@@ -31,7 +31,21 @@ class HermesClient:
         return self._request("GET", "/api/plugins/kanban/boards").get("boards", [])
 
     def get_board(self, board: str) -> dict[str, Any]:
-        return self._request("GET", "/api/plugins/kanban/board", params={"board": board})
+        return self._request(
+            "GET",
+            "/api/plugins/kanban/board",
+            params={"board": board, "include_archived": "true"},
+        )
+
+    def task_exists(self, board: str, task_id: str) -> bool:
+        response = self.http.get(
+            f"/api/plugins/kanban/tasks/{task_id}",
+            params={"board": board},
+        )
+        if response.status_code == 404:
+            return False
+        response.raise_for_status()
+        return True
 
     def create_task(self, board: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", "/api/plugins/kanban/tasks", params={"board": board}, json=payload)["task"]
@@ -43,3 +57,10 @@ class HermesClient:
             params={"board": board},
             json=payload,
         )["task"]
+
+    def delete_task(self, board: str, task_id: str) -> None:
+        self._request(
+            "DELETE",
+            f"/api/plugins/kanban/tasks/{task_id}",
+            params={"board": board},
+        )
