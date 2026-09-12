@@ -141,26 +141,33 @@ class SyncService:
         deleted_h: set[str] = set()
         deleted_c: set[str] = set()
         for mapping in self.state.list_task_mappings(board_slug):
-            h_present = mapping.hermes_task_id in h_by_id
-            c_present = mapping.clickup_task_id in c_by_id
-            if h_present and c_present:
+            htask = h_by_id.get(mapping.hermes_task_id)
+            ctask = c_by_id.get(mapping.clickup_task_id)
+
+            if htask is None:
+                htask = self.hermes.get_task(board_slug, mapping.hermes_task_id)
+                if htask is not None:
+                    h_by_id[mapping.hermes_task_id] = htask
+            if ctask is None:
+                ctask = self.clickup.get_task(mapping.clickup_task_id)
+                if ctask is not None:
+                    c_by_id[mapping.clickup_task_id] = ctask
+
+            if htask is not None and ctask is not None:
                 continue
-            if not h_present and c_present:
-                if not self.hermes.task_exists(board_slug, mapping.hermes_task_id):
-                    if not self.dry_run:
-                        self.clickup.delete_task(mapping.clickup_task_id)
-                    self.state.delete_task_mapping(board_slug, mapping.hermes_task_id)
-                    deleted_c.add(mapping.clickup_task_id)
-                continue
-            if h_present and not c_present:
-                if not self.clickup.task_exists(mapping.clickup_task_id):
-                    if not self.dry_run:
-                        self.hermes.delete_task(board_slug, mapping.hermes_task_id)
-                    self.state.delete_task_mapping(board_slug, mapping.hermes_task_id)
-                    deleted_h.add(mapping.hermes_task_id)
-                continue
-            if not self.hermes.task_exists(board_slug, mapping.hermes_task_id) and not self.clickup.task_exists(mapping.clickup_task_id):
+            if htask is None and ctask is not None:
+                if not self.dry_run:
+                    self.clickup.delete_task(mapping.clickup_task_id)
                 self.state.delete_task_mapping(board_slug, mapping.hermes_task_id)
+                deleted_c.add(mapping.clickup_task_id)
+                continue
+            if htask is not None and ctask is None:
+                if not self.dry_run:
+                    self.hermes.delete_task(board_slug, mapping.hermes_task_id)
+                self.state.delete_task_mapping(board_slug, mapping.hermes_task_id)
+                deleted_h.add(mapping.hermes_task_id)
+                continue
+            self.state.delete_task_mapping(board_slug, mapping.hermes_task_id)
         return deleted_h, deleted_c
 
     def run_once(self) -> None:
