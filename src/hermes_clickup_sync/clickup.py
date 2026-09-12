@@ -47,12 +47,15 @@ class ClickUpClient:
             page += 1
         return tasks
 
-    def task_exists(self, task_id: str) -> bool:
+    def get_task(self, task_id: str) -> dict[str, Any] | None:
         response = self.http.get(f"/api/v2/task/{task_id}")
         if response.status_code == 404:
-            return False
+            return None
         response.raise_for_status()
-        return True
+        return response.json()
+
+    def task_exists(self, task_id: str) -> bool:
+        return self.get_task(task_id) is not None
 
     def create_task(
         self,
