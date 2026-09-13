@@ -4,6 +4,8 @@ from typing import Any
 
 import httpx
 
+from .routing import board_payload_matches_listing, live_task_count
+
 
 class HermesClient:
     def __init__(
@@ -15,6 +17,7 @@ class HermesClient:
         timeout: float = 15.0,
     ):
         self.base_url = base_url.rstrip("/")
+        self._board_totals: dict[str, int] = {}
         headers = {}
         if session_token:
             headers["X-Hermes-Session-Token"] = session_token
@@ -28,14 +31,34 @@ class HermesClient:
         return response.json()
 
     def list_boards(self) -> list[dict[str, Any]]:
-        return self._request("GET", "/api/plugins/kanban/boards").get("boards", [])
+        boards = self._request("GET", "/api/plugins/kanban/boards").get("boards", [])
+        self._board_totals = {}
+        for board in boards:
+            slug = str(board.get("slug") or "")
+            try:
+                total = int(board["total"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if slug:
+                self._board_totals[slug] = total
+        return boards
 
     def get_board(self, board: str) -> dict[str, Any]:
-        return self._request(
+        payload = self._request(
             "GET",
             "/api/plugins/kanban/board",
             params={"board": board, "include_archived": "true"},
         )
+        expected = self._board_totals.get(board)
+        if expected is not None and not board_payload_matches_listing({"total": expected}, payload):
+            actual = live_task_count(payload)
+            raise RuntimeError(
+                f"Hermes board routing mismatch for {board!r}: board listing reports "
+                f"{expected} live task(s), but the board endpoint returned {actual}. "
+                "Refusing to sync this cycle to prevent cross-board task duplication. "
+                "Check whether the Hermes dashboard process has a board-specific database override."
+            )
+        return payload
 
     def get_task_detail(self, board: str, task_id: str) -> dict[str, Any] | None:
         response = self.http.get(
